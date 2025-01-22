@@ -1,20 +1,17 @@
 // src/index.ts
 import { Hono } from 'hono';
-import { serve } from '@hono/node-server';
-import { S3Client } from 'bun';
+import { S3Client, GetObjectCommand, HeadObjectCommand } from "@aws-sdk/client-s3";
 
-// 初始化 S3 客户端（Cloudflare R2 特化配置）
-const s3 = new S3Client({
-  accessKeyId: process.env.R2_ACCESS_KEY_ID!,      // 建议通过环境变量注入
-  secretAccessKey: process.env.R2_SECRET_ACCESS_KEY!,
-  bucket: process.env.R2_BUCKET_NAME!,             // R2 存储桶名称
-  endpoint: process.env.R2_ENDPOINT,               // R2 特定端点
-  region: "auto",                                  // R2 要求固定值
-});
+const app = new Hono<{
+  Bindings: {
+    R2_ACCESS_KEY_ID: string;
+    R2_SECRET_ACCESS_KEY: string;
+    R2_BUCKET_NAME: string;
+    R2_ENDPOINT: string;
+  }
+}>();
 
-const app = new Hono();
-
-// 安全验证与类型映射
+// 安全验证与类型映射（保持不变）
 const ALLOWED_EXTENSIONS = new Set(['.jpg', '.jpeg', '.png', '.gif', '.webp']);
 const CONTENT_TYPES = {
   '.jpg': 'image/jpeg',
@@ -24,67 +21,87 @@ const CONTENT_TYPES = {
   '.webp': 'image/webp',
 } as const;
 
-// 增强型安全验证
 function validateFilename(filename: string): boolean {
-  return /^[\w\-\.]{1,256}$/.test(filename) &&      // 长度限制+安全字符
-    !filename.includes('..') &&                // 防止路径遍历
-    filename.split('.').length <= 10;          // 防止过度分段
+  return /^[\w\-.]{1,256}$/.test(filename) &&
+    !filename.includes('..') &&
+    filename.split('.').length <= 10;
 }
 
 app.get('/images/:filename', async (c) => {
   const filename = c.req.param('filename');
+  const BUCKET_NAME = c.env.R2_BUCKET_NAME!;
+  const env = c.env;
+  // 初始化 S3 客户端（Cloudflare R2 特化配置）
+  const s3 = new S3Client({
+    region: "auto",
+    credentials: {
+      accessKeyId: env.R2_ACCESS_KEY_ID!,
+      secretAccessKey: env.R2_SECRET_ACCESS_KEY!,
+    },
+    endpoint: env.R2_ENDPOINT,
+    forcePathStyle: true, // 重要：R2 需要路径类型访问
+  });
 
-  // 安全验证
+
+
   if (!validateFilename(filename)) {
     return c.text('Invalid filename format', 400);
   }
 
-  // 文件扩展名验证
   const ext = filename.slice(filename.lastIndexOf('.')).toLowerCase();
   if (!ALLOWED_EXTENSIONS.has(ext)) {
     return c.text('Unsupported file type', 415);
   }
 
   try {
-    // 创建 S3 文件引用
-    const file = s3.file(`${filename}`);  // 带目录前缀
-    const [stat, exists] = await Promise.all([
-      file.stat(),
-      file.exists()                                  // 存在性检查
-    ]);
-    if (!exists) {
-      return c.text('Image not found', 404);
-    }
+    // 检查文件是否存在并获取元数据
+    const headCommand = new HeadObjectCommand({
+      Bucket: BUCKET_NAME,
+      Key: filename,
+    });
+    const headResponse = await s3.send(headCommand);
 
-    // 响应头优化
-    return c.newResponse(file.stream(), 200, {
+    // 获取文件流
+    const getCommand = new GetObjectCommand({
+      Bucket: BUCKET_NAME,
+      Key: filename,
+    });
+    const response = await s3.send(getCommand);
+
+    return c.newResponse(response.Body as ReadableStream, 200, {
       'Content-Type': CONTENT_TYPES[ext as keyof typeof CONTENT_TYPES],
-      'Cache-Control': 'public, max-age=604800',   // 7天缓存
-      'ETag': stat.etag,                   // 自动哈希校验
-      'X-Content-Type-Options': 'nosniff'          // 安全增强
+      'Cache-Control': 'public, max-age=604800',
+      'ETag': headResponse.ETag?.replace(/"/g, ''), // 移除可能的引号
+      'Content-Length': headResponse.ContentLength?.toString(),
+      'X-Content-Type-Options': 'nosniff'
     });
 
-  } catch (error) {
+  } catch (error: any) {
+    if (error.name === 'NotFound') {
+      return c.text('Image not found', 404);
+    }
     console.error(`[S3 Error] ${new Date().toISOString()}`, error);
     return c.text('Internal Server Error', 500);
   }
 });
 
-// 健康检查端点
-app.get('/health', (c) => {
+// 健康检查端点（调整状态检测）
+app.get('/health', async (c) => {
+  const env = c.env;
+  // 初始化 S3 客户端（Cloudflare R2 特化配置）
+  const s3 = new S3Client({
+    region: "auto",
+    credentials: {
+      accessKeyId: env.R2_ACCESS_KEY_ID!,
+      secretAccessKey: env.R2_SECRET_ACCESS_KEY!,
+    },
+    endpoint: env.R2_ENDPOINT,
+    forcePathStyle: true, // 重要：R2 需要路径类型访问
+  });
   return c.json({
     status: 'OK',
-    s3: s3 ? 'connected' : 'disconnected'
+    s3: await s3.config.credentials() ? 'connected' : 'disconnected'
   });
-});
-
-// 启动服务
-const port = process.env.PORT || 3000;
-serve({
-  fetch: app.fetch,
-  port: Number(port),
-}, () => {
-  console.log(`Server running on http://localhost:${port}`);
 });
 
 export default app;
