@@ -1,0 +1,19 @@
+{
+  "name": "r2-images",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy --minify"
+  },
+  "dependencies": {
+    "@aws-sdk/client-s3": "^3.732.0",
+    "@aws-sdk/s3-request-presigner": "^3.732.0",
+    "@hono/node-server": "^1.13.7",
+    "hono": "^4.6.17"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20250109.0",
+    "@types/bun": "^1.1.18",
+    "bun-types": "^1.1.45",
+    "wrangler": "^3.101.0"
+  }
+}

@@ -1,0 +1,30 @@
+name = "r2-images"
+main = "src/index.ts"
+compatibility_date = "2025-01-22"
+
+compatibility_flags = [ "nodejs_compat" ]
+
+[vars]
+R2_ACCESS_KEY_ID = "66ffb98f5a4ff8f9a316d9f0370acfb1"
+R2_BUCKET_NAME = "bookbucket"
+R2_ENDPOINT = "https://9894264f69cee8b4c74e99441299f17a.r2.cloudflarestorage.com"
+
+# [[kv_namespaces]]
+# binding = "MY_KV_NAMESPACE"
+# id = "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+
+# [[r2_buckets]]
+# binding = "MY_BUCKET"
+# bucket_name = "my-bucket"
+
+# [[d1_databases]]
+# binding = "DB"
+# database_name = "my-database"
+# database_id = ""
+
+# [ai]
+# binding = "AI"
+
+# [observability]
+# enabled = true
+# head_sampling_rate = 1
