@@ -42,8 +42,6 @@ app.get('/images/:filename', async (c) => {
     forcePathStyle: true, // 重要：R2 需要路径类型访问
   });
 
-
-
   if (!validateFilename(filename)) {
     return c.text('Invalid filename format', 400);
   }
@@ -66,16 +64,36 @@ app.get('/images/:filename', async (c) => {
       Bucket: BUCKET_NAME,
       Key: filename,
     });
-    const response = await s3.send(getCommand);
+    // 获取缓存实例
+    const cache = caches.default; // 直接使用运行时全局变量
+  
+    // 创建唯一的缓存键（推荐使用规范化URL）
+    const cacheKey = new Request(c.req.url.toString(), c.req);
+  
+    let cachedResponse = await cache.match(cacheKey);
+    if (cachedResponse) {
+      // 不能直接修改已有响应头，需要创建新响应
+      return new Response(cachedResponse.body, {
+        status: 200,
+        headers: {
+          ...Object.fromEntries(cachedResponse.headers),
+          'x-cache-status': 'HIT'
+        }
+      });
+    }
+    const s3Response = await s3.send(getCommand);
 
-    return c.newResponse(response.Body as ReadableStream, 200, {
+    const newResponse = c.newResponse(s3Response.Body as ReadableStream, 200, {
       'Content-Type': CONTENT_TYPES[ext as keyof typeof CONTENT_TYPES],
       'Cache-Control': 'public, max-age=604800',
       'ETag': headResponse.ETag?.replace(/"/g, ''), // 移除可能的引号
       'Content-Length': headResponse.ContentLength?.toString(),
-      'X-Content-Type-Options': 'nosniff'
+      'X-Content-Type-Options': 'nosniff',
+      'X-Cache-Status': 'MISS'
     });
-
+    // 异步缓存响应
+    c.executionCtx.waitUntil(cache.put(cacheKey, newResponse.clone()));
+    return newResponse;
   } catch (error: any) {
     if (error.name === 'NotFound') {
       return c.text('Image not found', 404);
